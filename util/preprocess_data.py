@@ -10,7 +10,7 @@ def impute_missing_vals(df, threshs = None):
         threshs = {"oldest_date": min(pd.to_datetime(df.last_review)),
                     "newest_date": max(pd.to_datetime(df.last_review))}
 
-    return (df
+    df = (df
         # column "host_name" (drop)
         .loc[:, df.columns != "host_name"]
         # column "last_review" (reformat & impute missing vals)
@@ -20,7 +20,12 @@ def impute_missing_vals(df, threshs = None):
         .assign(last_review_recency_log_noise = lambda df_: np.log1p(df_.last_review_recency) + np.random.normal(scale = 0.1, size = len(df_))) # use log and add some noise for smoother results (helps convergence of some algos)
         # column "reviews_per_month" (impute missing vals)
         .assign(reviews_per_month = lambda df_ : df_.reviews_per_month.mask(df_.reviews_per_month.isna(), 0)) # impute missing values with 0
-        ), threshs
+    )
+
+    # drop date column (we use the new recency columns instead)
+    df = df.loc[:, [col for col in df.columns if col not in ["last_review"]]]
+
+    return df, threshs
 
 def encode_room_type(df):
     """
@@ -43,7 +48,7 @@ def encode_geo_fts(df, threshs = None):
     If this function is applied to the validation / test data, we need to provide it all thresholds
     that we used to preprocess our training data.
     """
-    fts = ["global", "neighbourhood_group", "neighbourhood"]
+    fts = ["global", "lvl1", "lvl2_GeoID", "lvl3_GeoID", "lvl4_GeoID"]
 
     if threshs is None:
         threshs = dict()

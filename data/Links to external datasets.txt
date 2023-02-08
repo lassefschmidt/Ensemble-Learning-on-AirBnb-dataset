@@ -1,0 +1,13 @@
+NYC State Data:
+2020_NYC_Community Districts.csv --> https://data.cityofnewyork.us/City-Government/2020-Community-District-Tabulation-Areas-CDTAs-Map/xrfd-bjik
+2020_NYC_Neighbourhoods.csv --> https://data.cityofnewyork.us/City-Government/2020-Neighborhood-Tabulation-Areas-NTAs-Mapped/4hft-v355
+2020_NYC_Census_Tracts.csv --> https://data.cityofnewyork.us/City-Government/2020-Census-Tracts-Mapped/weqx-t5xr
+NYC_Subway_Entrances.csv --> https://data.cityofnewyork.us/Transportation/Subway-Entrances/drex-xx56
+NYC_Museums.csv --> https://data.cityofnewyork.us/Recreation/New-York-City-Museums/ekax-ky3z
+
+American Community Survey (most extensive nationwide survey, annually released):
+2020_NYC_Censusdata_Pop_Housing.xlsx --> https://www.nyc.gov/assets/planning/download/office/planning-level/nyc-population/census2020/nyc_decennialcensusdata_2010_2020_change.xlsx
+20162020_NYC_Censusdata_Econ.xlsx --> https://www.nyc.gov/site/planning/planning-level/nyc-population/american-community-survey.page.page
+
+New York City Housing Prices:
+https://www.yourlawyer.com/library/nyc-housing-prices-by-borough-and-neighborhood/
