@@ -12,8 +12,8 @@ def impute_missing_vals(df, threshs = None):
     we need to provide it all thresholds that we used to preprocess our training data. 
     """
     if threshs is None:
-        threshs = {"oldest_date": min(pd.to_datetime(df.last_review)),
-                    "newest_date": max(pd.to_datetime(df.last_review))}
+        threshs = {"oldest_date": min(pd.to_datetime(df.last_review).dropna()),
+                    "newest_date": max(pd.to_datetime(df.last_review).dropna())}
 
     df = (df
         # column "host_name" (drop)
@@ -26,9 +26,6 @@ def impute_missing_vals(df, threshs = None):
         # column "reviews_per_month" (impute missing vals)
         .assign(reviews_per_month = lambda df_ : df_.reviews_per_month.mask(df_.reviews_per_month.isna(), 0)) # impute missing values with 0
     )
-
-    # drop date column (we use the new recency columns instead)
-    df = df.loc[:, [col for col in df.columns if col not in ["last_review"]]]
 
     return df, threshs
 
@@ -215,9 +212,11 @@ def impute_missing_geo_vals(df, lvl1, lvl2, lvl3, lvl4, threshs = None):
             
     return df, threshs
 
-def encode_target(df, threshs = None):
+def encode_target(df, lambda_type, threshs = None):
     """
     Compute Empirical Bayes Target Encoding based on the geographical hierarchies within the dataset.
+
+    lambda_type must be either "variance" or "sigmoid"
 
     For more details on these features, please look at the Preprocessing notebook! Everything explained there, including the math!
 
@@ -231,15 +230,17 @@ def encode_target(df, threshs = None):
 
         for ft in fts:
             if ft == "global":
-                threshs[ft] = { "count": df.price.count(),
-                                "mean":  df.price.mean(),
-                                "sd":    df.price.std(),
-                                "var":   df.price.var()}
+                threshs[ft] = { "count":  df.price.count(),
+                                "mean":   df.price.mean(),
+                                "median": df.price.median(),
+                                "sd":     df.price.std(),
+                                "var":    df.price.var()}
             else:
-                threshs[ft] = { "count":    dict(df.groupby([ft])["price"].count()),
-                                "mean":     dict(df.groupby([ft])["price"].mean()),
-                                "sd":       dict(df.groupby([ft])["price"].std()),
-                                "var":      dict(df.groupby([ft])["price"].var())
+                threshs[ft] = { "count":  dict(df.groupby([ft])["price"].count()),
+                                "mean":   dict(df.groupby([ft])["price"].mean()),
+                                "median": dict(df.groupby([ft])["price"].median()),
+                                "sd":     dict(df.groupby([ft])["price"].std()),
+                                "var":    dict(df.groupby([ft])["price"].var())
                 }
 
     def get_stat(df_, cur_lvl, agg):
@@ -248,15 +249,21 @@ def encode_target(df, threshs = None):
             .temp
         )
 
-    def get_lambdas(df_, cur_lvl, prev_lvl):
-        return (df_
-            .assign(temp = lambda df_: [(cur_count * prev_var) / (cur_var + (cur_count * prev_var)) for cur_count, cur_var, prev_var in zip(df_[cur_lvl+"_c"], df_[cur_lvl+"_v"], df_[prev_lvl+"_v"])])
-            .temp
-        )
+    def get_lambdas(df_, cur_lvl, prev_lvl, lambda_type, k = 5, f = 1.5):
+        if lambda_type == "variance":
+            return (df_
+                .assign(temp = lambda df_: [(cur_count * prev_var) / (cur_var + (cur_count * prev_var)) for cur_count, cur_var, prev_var in zip(df_[cur_lvl+"_c"], df_[cur_lvl+"_v"], df_[prev_lvl+"_v"])])
+                .temp
+            )
+        elif lambda_type == "sigmoid":
+            return (df_
+                .assign(temp = lambda df_: [(1) / (1 + np.exp(-((cur_count - k)/f))) for cur_count in df_[cur_lvl+"_c"]])
+                .temp
+            )
 
     def blend_stat(df_, cur_lvl, prev_lvl, stat):
         return (df_
-            .assign(lambdas = lambda df_: get_lambdas(df_, cur_lvl = cur_lvl, prev_lvl = prev_lvl))
+            .assign(lambdas = lambda df_: get_lambdas(df_, cur_lvl = cur_lvl, prev_lvl = prev_lvl, lambda_type = lambda_type))
             .assign(temp = lambda df_: [lam * cur_stat + (1 - lam) * prev_stat for lam, cur_stat, prev_stat in zip(df_.lambdas, df_[cur_lvl+"_"+stat], df_[prev_lvl+"_"+stat])])
             .temp
         )
@@ -264,25 +271,29 @@ def encode_target(df, threshs = None):
     df = (df
         # (1) compute basic stats for each level and fall back to previous level if not available
         ## level 1
-        .assign(temp1_c = lambda df_: [val if not np.isnan(val) else threshs[fts[0]]["count"] for val in get_stat(df_, cur_lvl = fts[1], agg = "count")])
-        .assign(temp1_m = lambda df_: [val if not np.isnan(val) else threshs[fts[0]]["mean"]  for val in get_stat(df_, cur_lvl = fts[1], agg = "mean")])
-        .assign(temp1_s = lambda df_: [val if (not np.isnan(val)) and (val > 0) else threshs[fts[0]]["sd"]  for val in get_stat(df_, cur_lvl = fts[1], agg = "sd")])
-        .assign(temp1_v = lambda df_: [val if (not np.isnan(val)) and (val > 0) else threshs[fts[0]]["var"] for val in get_stat(df_, cur_lvl = fts[1], agg = "var")])
+        .assign(lvl = lambda df_: ["cur" if not np.isnan(val) else "prev" for val in get_stat(df_, cur_lvl = fts[1], agg = "count")])
+        .assign(temp1_c = lambda df_: [threshs[fts[0]]["count"] if lvl == "prev" else cur for cur, lvl in zip(get_stat(df_, cur_lvl = fts[1], agg = "count"),  df_.lvl)])
+        .assign(temp1_m = lambda df_: [threshs[fts[0]]["mean"]  if lvl == "prev" else cur for cur, lvl in zip(get_stat(df_, cur_lvl = fts[1], agg = "median"), df_.lvl)])
+        .assign(temp1_s = lambda df_: [threshs[fts[0]]["sd"]    if lvl == "prev" else cur for cur, lvl in zip(get_stat(df_, cur_lvl = fts[1], agg = "sd"),     df_.lvl)])
+        .assign(temp1_v = lambda df_: [threshs[fts[0]]["var"]   if lvl == "prev" else cur for cur, lvl in zip(get_stat(df_, cur_lvl = fts[1], agg = "var"),    df_.lvl)])
         ## level 2
-        .assign(temp2_c = lambda df_: [val if not np.isnan(val) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[2], agg = "count"), df_.temp1_c)])
-        .assign(temp2_m = lambda df_: [val if not np.isnan(val) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[2], agg = "mean"),  df_.temp1_m)])
-        .assign(temp2_s = lambda df_: [val if (not np.isnan(val)) and (val > 0) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[2], agg = "sd"),  df_.temp1_s)])
-        .assign(temp2_v = lambda df_: [val if (not np.isnan(val)) and (val > 0) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[2], agg = "var"), df_.temp1_v)])
+        .assign(lvl = lambda df_: ["cur" if not np.isnan(val) else "prev" for val in get_stat(df_, cur_lvl = fts[2], agg = "count")])
+        .assign(temp2_c = lambda df_: [prev if lvl == "prev" else cur for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[2], agg = "count"),  df_.temp1_c, df_.lvl)])
+        .assign(temp2_m = lambda df_: [prev if lvl == "prev" else cur for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[2], agg = "median"), df_.temp1_m, df_.lvl)])
+        .assign(temp2_s = lambda df_: [prev if lvl == "prev" else cur if cur > 1 else 1 for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[2], agg = "sd"),  df_.temp1_s, df_.lvl)])
+        .assign(temp2_v = lambda df_: [prev if lvl == "prev" else cur if cur > 1 else 1 for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[2], agg = "var"), df_.temp1_v, df_.lvl)])
         ## level 3
-        .assign(temp3_c = lambda df_: [val if not np.isnan(val) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[3], agg = "count"), df_.temp2_c)])
-        .assign(temp3_m = lambda df_: [val if not np.isnan(val) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[3], agg = "mean"),  df_.temp2_m)])
-        .assign(temp3_s = lambda df_: [val if (not np.isnan(val)) and (val > 0) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[3], agg = "sd"),  df_.temp2_s)])
-        .assign(temp3_v = lambda df_: [val if (not np.isnan(val)) and (val > 0) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[3], agg = "var"), df_.temp2_v)])
+        .assign(lvl = lambda df_: ["cur" if not np.isnan(val) else "prev" for val in get_stat(df_, cur_lvl = fts[3], agg = "count")])
+        .assign(temp3_c = lambda df_: [prev if lvl == "prev" else cur for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[3], agg = "count"),  df_.temp2_c, df_.lvl)])
+        .assign(temp3_m = lambda df_: [prev if lvl == "prev" else cur for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[3], agg = "median"), df_.temp2_m, df_.lvl)])
+        .assign(temp3_s = lambda df_: [prev if lvl == "prev" else cur if cur > 1 else 1 for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[3], agg = "sd"),  df_.temp2_s, df_.lvl)])
+        .assign(temp3_v = lambda df_: [prev if lvl == "prev" else cur if cur > 1 else 1 for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[3], agg = "var"), df_.temp2_v, df_.lvl)])
         ## level 4
-        .assign(temp4_c = lambda df_: [val if not np.isnan(val) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[4], agg = "count"), df_.temp3_c)])
-        .assign(temp4_m = lambda df_: [val if not np.isnan(val) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[4], agg = "mean"),  df_.temp3_m)])
-        .assign(temp4_s = lambda df_: [val if (not np.isnan(val)) and (val > 0) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[4], agg = "sd"),  df_.temp3_s)])
-        .assign(temp4_v = lambda df_: [val if (not np.isnan(val)) and (val > 0) else temp for val, temp in zip(get_stat(df_, cur_lvl = fts[4], agg = "var"), df_.temp3_v)])
+        .assign(lvl = lambda df_: ["cur" if not np.isnan(val) else "prev" for val in get_stat(df_, cur_lvl = fts[4], agg = "count")])
+        .assign(temp4_c = lambda df_: [prev if lvl == "prev" else cur for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[4], agg = "count"),  df_.temp3_c, df_.lvl)])
+        .assign(temp4_m = lambda df_: [prev if lvl == "prev" else cur for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[4], agg = "median"), df_.temp3_m, df_.lvl)])
+        .assign(temp4_s = lambda df_: [prev if lvl == "prev" else cur if cur > 1 else 1 for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[4], agg = "sd"),  df_.temp3_s, df_.lvl)])
+        .assign(temp4_v = lambda df_: [prev if lvl == "prev" else cur if cur > 1 else 1 for cur, prev, lvl in zip(get_stat(df_, cur_lvl = fts[4], agg = "var"), df_.temp3_v, df_.lvl)])
 
         # (2) compute Empirical Bayes Target Encoding
         ## blend layers 2 and 1
@@ -300,12 +311,30 @@ def encode_target(df, threshs = None):
 
     return (df
         # remove useless columns (cannot do this in previous step)
-        .loc[:, [col for col in df.columns if col not in ["temp1_c", "temp1_m", "temp1_s", "temp1_v", "temp2_c", "temp2_v", "temp3_c", "temp3_v", "temp4_c", "temp4_v"]]]
+        .loc[:, [col for col in df.columns if col not in ["lvl", "temp1_c", "temp1_m", "temp1_s", "temp1_v", "temp2_c", "temp2_v", "temp3_c", "temp3_v", "temp4_c", "temp4_v"]]]
         # update column names
         .rename(columns = {"temp2_m": "lvl2_target_m", "temp2_s": "lvl2_target_s",
                            "temp3_m": "lvl3_target_m", "temp3_s": "lvl3_target_s",
                            "temp4_m": "lvl4_target_m", "temp4_s": "lvl4_target_s"}, inplace = False)
         ), threshs
+
+def get_market_index_per_host(df, min_listings, threshs = None):
+    """
+    Get for each host his market index (is he over- or underpricing?)
+    """
+    if threshs is None:
+        threshs = (df
+            .assign(market_idx = lambda df_: (df_.price - df_.lvl4_target_m)/df_.lvl4_target_m)
+            .groupby("host_id")
+            .agg({"host_id": "count", "market_idx": "mean"})
+            .rename(columns = {"host_id": "count_listings"})
+        )
+        threshs = dict(threshs.loc[threshs["count_listings"] >= min_listings]["market_idx"])
+
+    # if we deal with test data, put 0 (we don't know and assume that the host prices based on target encoding)
+    return (df
+        .assign(market_index = lambda df_: [threshs.get(host_id, 0) for host_id in df_.host_id])
+    ), threshs
 
 def load_data():
     """
@@ -316,23 +345,19 @@ def load_data():
     df, lvl1, lvl2, lvl3, lvl4 = load_official_geo_hierarchies_data(df, lvl1, lvl2, lvl3, lvl4)
     return df, lvl1, lvl2, lvl3, lvl4
 
-def prep_pipeline(df, lvl1, lvl2, lvl3, lvl4, drop_cols = None, impute_threshs = None, impute_geo_threshs = None, encode_threshs = None):
+def prep_pipeline(df, lvl1, lvl2, lvl3, lvl4, lambda_type, min_listings, impute_threshs = None, impute_geo_threshs = None, encode_threshs = None, market_threshs = None):
     """
     Preprocess the provided pandas dataframe and drop the columns provided in a Python list to drop_cat_cols.
     If this function is applied to the validation / test data, we need to provide it all thresholds
     that we used to preprocess our training data. 
     """
-    df = df.copy()
-    
     df, impute_threshs     = impute_missing_vals(df, threshs = impute_threshs)
     df, impute_geo_threshs = impute_missing_geo_vals(df, lvl1, lvl2, lvl3, lvl4, threshs = impute_geo_threshs)
     df                     = encode_room_type(df)
-    df, encode_threshs     = encode_target(df, threshs = encode_threshs)
+    df, encode_threshs     = encode_target(df, lambda_type = lambda_type, threshs = encode_threshs)
+    df, market_threshs     = get_market_index_per_host(df, min_listings = min_listings, threshs = market_threshs)
 
-    if drop_cols:
-        df = df.loc[:, [col for col in df.columns if col not in drop_cols]]
-
-    return df, impute_threshs, impute_geo_threshs, encode_threshs
+    return df, impute_threshs, impute_geo_threshs, encode_threshs, market_threshs
 
 def split_frame(df):
     # split into X and y
@@ -340,3 +365,37 @@ def split_frame(df):
     X = df.copy()
     X.drop(["price"], axis = 1, inplace = True)
     return X, y
+
+class PreprocessingPipeline():
+    def __init__(self, lambda_type, min_listings, lvl1, lvl2, lvl3, lvl4, drop_cols = None):
+        self.lambda_type = lambda_type
+        self.min_listings = min_listings
+        self.lvl1 = lvl1
+        self.lvl2 = lvl2
+        self.lvl3 = lvl3
+        self.lvl4 = lvl4
+        self.drop_cols = drop_cols
+
+    def fit(self, X, y):
+        df = X.copy()
+        df["price"] = y
+        _, impute_threshs, impute_geo_threshs, encode_threshs, market_threshs = prep_pipeline(df, self.lvl1, self.lvl2, self.lvl3, self.lvl4,
+                                                                                                lambda_type = self.lambda_type, min_listings = self.min_listings)
+        self.impute_threshs = impute_threshs
+        self.impute_geo_threshs = impute_geo_threshs
+        self.encode_threshs = encode_threshs
+        self.market_threshs = market_threshs
+        return self
+
+    def transform(self, X):
+        X, _, _, _, _ = prep_pipeline(X, self.lvl1, self.lvl2, self.lvl3, self.lvl4,
+                                        lambda_type = self.lambda_type, min_listings = self.min_listings,
+                                        impute_threshs = self.impute_threshs,
+                                        impute_geo_threshs = self.impute_geo_threshs,
+                                        encode_threshs = self.encode_threshs,
+                                        market_threshs = self.market_threshs)
+        
+        if self.drop_cols:
+            X = X.loc[:, [col for col in X.columns if col not in self.drop_cols]]
+
+        return X
