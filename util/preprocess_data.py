@@ -4,7 +4,9 @@ from shapely import wkt # to convert geodata in csvs to readable format for geop
 import numpy as np
 
 def show_missing_vals(df):
-    (df.isna().sum()/len(df)).reset_index(name = "missing vals").plot.bar(x="index", y = "missing vals", rot = 90)
+    ax = (df.isna().sum()/len(df)*100).reset_index(name = "missing vals").plot.bar(x="index", y = "missing vals", rot = 90)
+    ax.set_xlabel("Feature")
+    ax.set_ylabel("% Share of Missing Values")
 
 def impute_missing_vals(df, threshs = None):
     """
@@ -226,7 +228,7 @@ def impute_missing_geo_vals(df, lvl1, lvl2, lvl3, lvl4, threshs = None):
             
     return df, threshs
 
-def encode_target(df, lambda_type, threshs = None):
+def encode_target(df, lambda_type, k, f, threshs = None):
     """
     Compute Empirical Bayes Target Encoding based on the geographical hierarchies within the dataset.
 
@@ -263,7 +265,7 @@ def encode_target(df, lambda_type, threshs = None):
             .temp
         )
 
-    def get_lambdas(df_, cur_lvl, prev_lvl, lambda_type, k = 5, f = 1.5):
+    def get_lambdas(df_, cur_lvl, prev_lvl, lambda_type, k = k, f = f):
         if lambda_type == "variance":
             return (df_
                 .assign(temp = lambda df_: [(cur_count * prev_var) / (cur_var + (cur_count * prev_var)) for cur_count, cur_var, prev_var in zip(df_[cur_lvl+"_c"], df_[cur_lvl+"_v"], df_[prev_lvl+"_v"])])
@@ -325,11 +327,12 @@ def encode_target(df, lambda_type, threshs = None):
 
     return (df
         # remove useless columns (cannot do this in previous step)
-        .loc[:, [col for col in df.columns if col not in ["lvl", "temp1_c", "temp1_m", "temp1_s", "temp1_v", "temp2_c", "temp2_v", "temp3_c", "temp3_v", "temp4_c", "temp4_v"]]]
+        .loc[:, [col for col in df.columns if col not in ["lvl", "temp1_c", "temp1_m", "temp1_s", "temp1_v",
+                                                          "temp2_c", "temp2_m", "temp2_s", "temp2_v",
+                                                          "temp3_c", "temp3_m", "temp3_s", "temp3_v",
+                                                          "temp4_c", "temp4_v"]]]
         # update column names
-        .rename(columns = {"temp2_m": "lvl2_target_m", "temp2_s": "lvl2_target_s",
-                           "temp3_m": "lvl3_target_m", "temp3_s": "lvl3_target_s",
-                           "temp4_m": "lvl4_target_m", "temp4_s": "lvl4_target_s"}, inplace = False)
+        .rename(columns = {"temp4_m": "lvl4_target_m", "temp4_s": "lvl4_target_s"}, inplace = False)
         ), threshs
 
 def get_market_index_per_host(df, min_listings, threshs = None):
@@ -359,7 +362,7 @@ def load_data():
     df, lvl1, lvl2, lvl3, lvl4 = load_official_geo_hierarchies_data(df, lvl1, lvl2, lvl3, lvl4)
     return df, lvl1, lvl2, lvl3, lvl4
 
-def prep_pipeline(df, lvl1, lvl2, lvl3, lvl4, lambda_type, min_listings, impute_threshs = None, impute_geo_threshs = None, encode_threshs = None, market_threshs = None):
+def prep_pipeline(df, lvl1, lvl2, lvl3, lvl4, lambda_type, min_listings, k, f, impute_threshs = None, impute_geo_threshs = None, encode_threshs = None, market_threshs = None, ):
     """
     Preprocess the provided pandas dataframe and drop the columns provided in a Python list to drop_cat_cols.
     If this function is applied to the validation / test data, we need to provide it all thresholds
@@ -368,7 +371,7 @@ def prep_pipeline(df, lvl1, lvl2, lvl3, lvl4, lambda_type, min_listings, impute_
     df, impute_threshs     = impute_missing_vals(df, threshs = impute_threshs)
     df, impute_geo_threshs = impute_missing_geo_vals(df, lvl1, lvl2, lvl3, lvl4, threshs = impute_geo_threshs)
     df                     = encode_room_type(df)
-    df, encode_threshs     = encode_target(df, lambda_type = lambda_type, threshs = encode_threshs)
+    df, encode_threshs     = encode_target(df, lambda_type = lambda_type, k = k, f = f, threshs = encode_threshs)
     df, market_threshs     = get_market_index_per_host(df, min_listings = min_listings, threshs = market_threshs)
 
     return df, impute_threshs, impute_geo_threshs, encode_threshs, market_threshs
@@ -381,20 +384,23 @@ def split_frame(df):
     return X, y
 
 class PreprocessingPipeline():
-    def __init__(self, lambda_type, min_listings, lvl1, lvl2, lvl3, lvl4, drop_cols = None):
+    def __init__(self, lambda_type, min_listings, lvl1, lvl2, lvl3, lvl4, k, f, drop_cols = None):
         self.lambda_type = lambda_type
         self.min_listings = min_listings
         self.lvl1 = lvl1
         self.lvl2 = lvl2
         self.lvl3 = lvl3
         self.lvl4 = lvl4
+        self.k = k
+        self.f = f
         self.drop_cols = drop_cols
 
     def fit(self, X, y):
         df = X.copy()
         df["price"] = y
         df, impute_threshs, impute_geo_threshs, encode_threshs, market_threshs = prep_pipeline(df, self.lvl1, self.lvl2, self.lvl3, self.lvl4,
-                                                                                                lambda_type = self.lambda_type, min_listings = self.min_listings)
+                                                                                                lambda_type = self.lambda_type, min_listings = self.min_listings,
+                                                                                                k = self.k, f = self.f)
         self.impute_threshs = impute_threshs
         self.impute_geo_threshs = impute_geo_threshs
         self.encode_threshs = encode_threshs
@@ -405,6 +411,7 @@ class PreprocessingPipeline():
     def transform(self, X):
         X, _, _, _, _ = prep_pipeline(X, self.lvl1, self.lvl2, self.lvl3, self.lvl4,
                                         lambda_type = self.lambda_type, min_listings = self.min_listings,
+                                        k = self.k, f = self.f,
                                         impute_threshs = self.impute_threshs,
                                         impute_geo_threshs = self.impute_geo_threshs,
                                         encode_threshs = self.encode_threshs,
