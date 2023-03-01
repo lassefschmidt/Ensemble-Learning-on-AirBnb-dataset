@@ -366,7 +366,6 @@ def prep_pipeline(df, lvl1, lvl2, lvl3, lvl4, lambda_type, min_listings, impute_
     that we used to preprocess our training data. 
     """
     df, impute_threshs     = impute_missing_vals(df, threshs = impute_threshs)
-    df                     = clip_target(df, replace_data = True)
     df, impute_geo_threshs = impute_missing_geo_vals(df, lvl1, lvl2, lvl3, lvl4, threshs = impute_geo_threshs)
     df                     = encode_room_type(df)
     df, encode_threshs     = encode_target(df, lambda_type = lambda_type, threshs = encode_threshs)
