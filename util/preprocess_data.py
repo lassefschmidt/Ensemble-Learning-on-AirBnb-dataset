@@ -29,6 +29,20 @@ def impute_missing_vals(df, threshs = None):
 
     return df, threshs
 
+def clip_target(df, replace_data = False):
+    """
+    Drop all listings with a price of $0 per nights and clip the maximum value to $900 per night.
+    For reasoning please have a look at the exploratory data analysis notebook.
+    """
+    if replace_data:
+        return (df
+            .assign(price = lambda df_: df_.price.clip(upper = 900))
+        )
+    else:
+        return (df
+            .assign(clipped_price = lambda df_: df_.price.clip(upper = 900))
+        )
+
 def encode_room_type(df):
     """
     Encode room type variable (ordinal categorical variable).
@@ -352,6 +366,7 @@ def prep_pipeline(df, lvl1, lvl2, lvl3, lvl4, lambda_type, min_listings, impute_
     that we used to preprocess our training data. 
     """
     df, impute_threshs     = impute_missing_vals(df, threshs = impute_threshs)
+    df                     = clip_target(df, replace_data = True)
     df, impute_geo_threshs = impute_missing_geo_vals(df, lvl1, lvl2, lvl3, lvl4, threshs = impute_geo_threshs)
     df                     = encode_room_type(df)
     df, encode_threshs     = encode_target(df, lambda_type = lambda_type, threshs = encode_threshs)
@@ -379,12 +394,13 @@ class PreprocessingPipeline():
     def fit(self, X, y):
         df = X.copy()
         df["price"] = y
-        _, impute_threshs, impute_geo_threshs, encode_threshs, market_threshs = prep_pipeline(df, self.lvl1, self.lvl2, self.lvl3, self.lvl4,
+        df, impute_threshs, impute_geo_threshs, encode_threshs, market_threshs = prep_pipeline(df, self.lvl1, self.lvl2, self.lvl3, self.lvl4,
                                                                                                 lambda_type = self.lambda_type, min_listings = self.min_listings)
         self.impute_threshs = impute_threshs
         self.impute_geo_threshs = impute_geo_threshs
         self.encode_threshs = encode_threshs
         self.market_threshs = market_threshs
+        # print(df.market_index.mean()) # for debugging
         return self
 
     def transform(self, X):
