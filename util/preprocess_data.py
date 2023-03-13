@@ -31,18 +31,22 @@ def impute_missing_vals(df, threshs = None):
 
     return df, threshs
 
-def clip_target(df, replace_data = False):
+def clip_target(df, method = 'replace'):
     """
-    Drop all listings with a price of $0 per nights and clip the maximum value to $900 per night.
+    Drop or Clip all listings with a price above $400 per night.
     For reasoning please have a look at the exploratory data analysis notebook.
     """
-    if replace_data:
+    if method == 'replace':
         return (df
-            .assign(price = lambda df_: df_.price.clip(upper = 900))
+            .assign(price = lambda df_: df_.price.clip(upper = 400))
         )
-    else:
+    elif method == 'drop':
         return (df
-            .assign(clipped_price = lambda df_: df_.price.clip(upper = 900))
+                [df.price < 400]
+        )
+    elif method == 'keep':
+        return (df
+            .assign(clipped_price = lambda df_: df_.price.clip(upper = 400))
         )
 
 def encode_room_type(df):
