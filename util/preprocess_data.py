@@ -4,9 +4,9 @@ from shapely import wkt # to convert geodata in csvs to readable format for geop
 import numpy as np
 
 def show_missing_vals(df):
-    ax = (df.isna().sum()/len(df)*100).reset_index(name = "missing vals").plot.bar(x="index", y = "missing vals", rot = 90)
-    ax.set_xlabel("Feature")
-    ax.set_ylabel("% Share of Missing Values")
+    ax = (df.isna().sum()/len(df)*100).reset_index(name = "missing vals").plot.barh(x="index", y = "missing vals")
+    ax.set_ylabel("Feature")
+    ax.set_xlabel("% Share of Missing Values")
 
 def impute_missing_vals(df, threshs = None):
     """
