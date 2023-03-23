@@ -9,6 +9,7 @@ Our task is to apply and compare all approaches taught in the course and practis
 # Files Descriptions
 - data: folder containing all additional datasets used to enrich original AirBnb data
 - images: folder containing images (plots, graphs, tables...) used in the final report
+- maps: contains html maps of New York City to visualize some features (e.g. quality of predictions)
 - models: folder containing all joblib model files for each best tuned model (except Tree Bagging Regressor, too heavy for github)
 - resources: folder containing research papers from which we used their methodology
 - util: folder containing python preprocessing script (implemented as a PreprocessingPipeline class with all its functions)
